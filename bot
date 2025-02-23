@@ -1,0 +1,96 @@
+# 📌 Gerekli Kütüphaneleri Yükleme
+!pip install numpy pandas torch torchvision tensorflow optuna scikit-learn joblib google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+
+import os
+import logging
+import time
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import tensorflow as tf
+import optuna
+import joblib
+from google.colab import auth
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+# 📌 Google Drive API Kimlik Doğrulama
+auth.authenticate_user()
+drive_service = build('drive', 'v3')
+
+# 📌 Google Drive'a Model Kaydetme Fonksiyonu
+def save_model_to_drive(model, filename="ai_model.pth"):
+    model_path = f"/content/{filename}"
+    torch.save(model.state_dict(), model_path)
+
+    file_metadata = {
+        'name': filename,
+        'mimeType': 'application/octet-stream'
+    }
+    media = MediaFileUpload(model_path, mimetype='application/octet-stream')
+    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+
+    logging.info(f"✅ AI Modeli '{filename}' olarak Google Drive'a kaydedildi.")
+
+# 📌 AI Modeli (LSTM)
+class LSTMPredictor(nn.Module):
+    def __init__(self, input_size=1, hidden_layer_size=50, output_size=1):
+        super().__init__()
+        self.hidden_layer_size = hidden_layer_size
+        self.lstm = nn.LSTM(input_size, hidden_layer_size, batch_first=True)
+        self.linear = nn.Linear(hidden_layer_size, output_size)
+        self.hidden_cell = (torch.zeros(1, 1, self.hidden_layer_size), torch.zeros(1, 1, self.hidden_layer_size))
+
+    def forward(self, input_seq):
+        lstm_out, self.hidden_cell = self.lstm(input_seq.view(len(input_seq), 1, -1), self.hidden_cell)
+        predictions = self.linear(lstm_out.view(len(input_seq), -1))
+        return predictions[-1]
+
+# 📌 AI Modelini Eğitme
+def train_ai_model():
+    data = pd.read_csv("market_data.csv")  # Gerçek piyasa verisi ile değiştirilebilir
+    X = torch.tensor(data['feature'].values, dtype=torch.float32)
+    y = torch.tensor(data['target'].values, dtype=torch.float32)
+
+    model = LSTMPredictor()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    loss_function = nn.MSELoss()
+
+    for epoch in range(10):  # 10 epoch boyunca eğit
+        model.train()
+        optimizer.zero_grad()
+        output = model(X)
+        loss = loss_function(output, y)
+        loss.backward()
+        optimizer.step()
+
+    save_model_to_drive(model)  # Modeli Google Drive'a kaydet
+    return model
+
+# 📌 Haftalık AI Model Güncelleme
+def weekly_model_update():
+    while True:
+        logging.info("📢 Haftalık AI Model Güncellemesi Başlatıldı...")
+        model = train_ai_model()
+        logging.info("✅ AI Modeli Haftalık Güncellendi!")
+        time.sleep(604800)  # 7 gün (1 hafta)
+
+# 📌 PnL ve Volatilite Tabanlı Dinamik Model Güncelleme
+def dynamic_model_update():
+    while True:
+        pnl = np.random.uniform(-10, 10)  # Gerçek işlem PnL verisi ile değiştirilebilir
+        volatility = np.random.uniform(0.01, 0.1)  # Gerçek volatilite ile değiştirilebilir
+
+        if abs(pnl) > 5 or volatility > 0.05:  # %5 zarar/kazanç veya yüksek volatilite durumunda güncelle
+            logging.info("📢 Dinamik AI Model Güncellemesi Başlatıldı...")
+            model = train_ai_model()
+            logging.info("✅ AI Modeli Dinamik Olarak Güncellendi!")
+        
+        time.sleep(3600)  # 1 saatte bir kontrol et
+
+# 📌 Model Güncelleme İşlemlerini Paralel Çalıştır
+import threading
+threading.Thread(target=weekly_model_update, daemon=True).start()
+threading.Thread(target=dynamic_model_update, daemon=True).start()
